@@ -1,0 +1,14 @@
+logs ?= ""
+
+run_table:
+	@make stop bot=$(bot) || true
+	docker run -e BOT_USER_IDX=$(bot) -e TABLE_ID=$(id) -d --name poker-bot-$(bot) --restart=always --memory 64m registry.gitlab.com/pokerblow/poker-bot:a3b6b5fc
+
+run_all:
+	for i in `seq 0 8`; do make run bot=$$i && sleep 2; done
+stop:
+	@docker stop poker-bot-$(bot) || true
+	@docker rm poker-bot-$(bot)
+
+stop_all:
+	for i in `seq 0 8`; do make stop bot=$$i; done
