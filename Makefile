@@ -5,8 +5,11 @@ isLocal ?=
 gameType ?= table
 uid ?=
 
+run_ai:
+	TABLE_ID=$(id) USER_ID=$(uid) ALG=1 GAME_TYPE=$(gameType) BOT_EMAIL=$(email) BOT_PASSWORD=$(password) node app.js
+
 run:
-	TABLE_ID=$(id) BOT_USER_IDX=$(bot) USER_ID=$(uid) ALG=1 GAME_TYPE=$(gameType) DEV=$(isDev) LOCAL=$(isLocal) node app.js node app.js
+	TABLE_ID=$(id) BOT_USER_IDX=$(bot) USER_ID=$(uid) ALG=1 GAME_TYPE=$(gameType) DEV=$(isDev) LOCAL=$(isLocal) node app.js
 
 list:
 	ps aux | grep "node app.js"

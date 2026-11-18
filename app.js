@@ -1,10 +1,10 @@
-const tableClient = require("@pokerblow/table-client-typescript")
-const tableChatClient = require("@pokerblow/table-chat-client-typescript")
+const tableClient = require("@pokergloss/table-client-typescript")
+const tableChatClient = require("@pokergloss/table-chat-client-typescript")
 const axios = require('axios')
 const WebSocket = require('ws');
 const action0 = require('./action_0')
 const action1 = require('./action_1')
-let basePath
+let basePath = "https://api.pokergloss.com/api/table"
 if (process.env.DEV) {
   basePath = "http://dev.pokerblow.com/api/table"
 }
@@ -28,7 +28,9 @@ const botUserIds = [
 ]
 
 const userIdIdx = process.env.BOT_USER_IDX ? parseInt(process.env.BOT_USER_IDX) : -1
-let theUserId = process.env.USER_ID ? process.env.USER_ID : undefined
+let theUserId = process.env.USER_ID
+const botEmail = process.env.BOT_EMAIL
+const botPassword = process.env.BOT_PASSWORD
 const randAlg = () => [0, 1, 1, 1][Math.floor(Math.random()*4)]
 const algorithm = process.env.ALG ? parseInt(process.env.ALG) : randAlg()
 
@@ -39,12 +41,43 @@ const userId = () => {
   return botUserIds[userIdIdx]
 }
 
-const admin = require('firebase-admin');
-process.env['GOOGLE_APPLICATION_CREDENTIALS'] = process.cwd() + "/serviceAccountKey.json"
-admin.initializeApp({
-  credential: admin.credential.applicationDefault(),
-  databaseURL: 'https://pokerblow.firebaseio.com'
-});
+
+const { getAuth, signInWithEmailAndPassword } = require("firebase/auth");
+const config = {
+  apiKey: 'AIzaSyD8vmB6kGZOLHZBNYwd3JLDKd388-DpN9Q',
+  authDomain: 'pokerblow.firebaseapp.com',
+  projectId: "pokerblow",
+  databaseURL: "https://pokerblow.firebaseio.com",
+  storageBucket: "pokerblow.appspot.com",
+  messagingSenderId: "382776642412",
+  appId: "1:382776642412:web:18ad5dc1371399f9140149"
+};
+const { initializeApp } = require("firebase/app");
+const app = initializeApp(config);
+const auth = getAuth(app);
+
+async function loginAndGetToken(email, password) {
+  try {
+    // 1. Authenticate the user with email and password
+    const userCredential = await signInWithEmailAndPassword(auth, email, password);
+    const user = userCredential.user;
+
+    // 2. Retrieve the JWT ID token
+    const idToken = await user.getIdToken();
+
+    console.log("Successfully signed in!");
+    console.log("ID Token:", idToken);
+
+    // TODO: Send `idToken` to your backend via headers (e.g., Authorization: Bearer <token>)
+    return idToken;
+
+  } catch (error) {
+    const errorCode = error.code;
+    const errorMessage = error.message;
+    console.error(`Login failed [${errorCode}]: ${errorMessage}`);
+    throw error;
+  }
+}
 
 const botTableIds = ["5f95b6800088c27779c29d0e", "5f96a7029dd0d5d97b87d4e7"]
 const randTableId = () => botTableIds[Math.floor(Math.random()*botTableIds.length)]
@@ -57,7 +90,7 @@ let gameType = process.env.GAME_TYPE ? process.env.GAME_TYPE : "table"
 async function main() {
   timeoutExit()
 
-  if (gameType === 'table') { // this allows scaling, meaning no need to specify bot
+  if (!botEmail && gameType === 'table') { // this allows scaling, meaning no need to specify bot
     if (userIdIdx === -1) {
       tableId = randTableId()
       const res = await api.getTables(0, botTableIds.length)
@@ -67,7 +100,7 @@ async function main() {
       const availableBotUserIds = botUserIds.filter(uid => !allPlayerIdsSet.has(uid))
       theUserId = availableBotUserIds[Math.floor(Math.random()*availableBotUserIds.length)]
       if (!theUserId) {
-        console.error("didn't find computedBotUserId")
+        console.error("Bot user ID not found")
         process.exit(1)
       }
     }
@@ -77,12 +110,12 @@ async function main() {
   fetchDalyBonus()
 
   if (!idTokenGlobal) {
-    console.error("idToken: ", idTokenGlobal)
+    console.error("ID token missing")
     process.exit(1)
   }
 
   if (gameType === 'multiLobby') {
-    await api.registerMulti(tableId, reqConf()).catch(e => console.log("couldn't register"))
+    await api.registerMulti(tableId, reqConf()).catch(e => console.log("Register failed"))
     const ws = new WebSocket(`${host()}/api/ws/news?token=${idTokenGlobal}`)
     ws.on("open", () => {
       console.info("user ws opened")
@@ -108,7 +141,7 @@ async function main() {
     })
 
     ws.on('error', async (error) => {
-      console.error("user socket error: ", error)
+      console.error("User socket error:", error)
     })
     return
   }
@@ -134,7 +167,7 @@ async function main() {
       process.exit(0)
     }
 
-    api.registerForSitAndGo(tableId, {position}, reqConf()).catch(e => console.error("couldn't register", e.response))
+    api.registerForSitAndGo(tableId, {position}, reqConf()).catch(e => console.error("Register failed", e.response))
   }
 
   connect()
@@ -157,28 +190,38 @@ function timeoutExit() {
 main()
 
 function stand(posFrom) {
-  return api.stand(tableId, posFrom, reqConf()).catch(e => console.log("couldn't stand"))
+  return api.stand(tableId, posFrom, reqConf()).catch(e => console.log("Stand failed"))
 }
 
 function takeRandomSeat() {
   console.log("Taking random seat")
   const seatsFree = table.seats.filter(s => !s.player)
   if (seatsFree.length === 0) {
-    console.log(`Exiting, table ${tableId} is full`)
+    console.log(`Table ${tableId} is full`)
     process.exit(0)
   }
   botPosition = seatsFree[Math.floor(Math.random()*seatsFree.length)].position
   api.reserveSeatV2(tableId, botPosition, reqConf())
     .then(() => {
-      api.buyInV2(tableId, botPosition, {stack: 250}, reqConf()).catch(e => {
-        console.error("Couldn't buy in", e)
-        process.exit(1)
-      })
+      buyInNow()
     })
     .catch(e => {
-      console.error("Couldn't reserve seat", e)
+      console.error("Seat reserve failed", e)
       process.exit(1)
     })
+}
+
+function buyInNow() {
+  api.buyInV2(tableId, botPosition, {stack: table.bigBlind*100}, reqConf()).catch(e => {
+    const msg = e.response?.data?.message || e.message
+    console.error("Buy-in failed:", msg)
+    if (msg.includes("not enough chips") || msg.includes("insufficient")) {
+      console.log("Will retry buy-in in 5 minutes")
+      setTimeout(() => buyInNow(), 5*60*1000)
+    } else {
+      process.exit(1)
+    }
+  })
 }
 
 
@@ -188,7 +231,7 @@ async function connect() {
   }
   switch (gameType) {
     case "table":
-      const res = await api.getFullTable(tableId, reqConf()).catch((e) => console.error(e))
+      const res = await api.getFullTable(tableId, reqConf()).catch((e) => console.error("Get table failed", e))
       table = res.data
       onInit()
   }
@@ -212,10 +255,9 @@ async function onInit() {
       botPosition = bot.position
       if (bot.stack > 0) {
         await api.backToGame(tableId, botPosition, reqConf())
-          .catch(e => console.error("failed to sitback", e))
+          .catch(e => console.error("Sitback failed", e))
       } else {
-        await api.buyInV2(tableId, botPosition, {stack: table.bigBlind*100}, reqConf())
-          .catch(e => console.error("failed to buy in on zero stack", e))
+        await buyInNow()
       }
     } else {
       if (table.type === "cashGame") {
@@ -231,9 +273,9 @@ async function onInit() {
 }
 
 function host() {
-  let host = "wss://pokerblow.com"
+  let host = "wss://api.pokergloss.com"
   if (process.env.DEV) {
-    host = "ws://dev.pokerblow.com"
+    host = "ws://dev.pokergloss.com"
   }
   if (process.env.LOCAL) {
     host = "ws://localhost:4040"
@@ -299,8 +341,7 @@ function wsConnect() {
             if (!table.seats[botPosition].player || table.seats[botPosition].player.stack === 0) {
               console.info("Will buy-in in a minute")
               setTimeout(() => {
-                api.buyInV2(tableId, botPosition, {stack: table.bigBlind*100}, reqConf())
-                  .catch(e => console.error("failed to buy in on zero stack", e))
+                buyInNow()
               }, 60*1000)
             }
           }
@@ -316,10 +357,10 @@ function wsConnect() {
 
   tableWs.on('error', async (error) => {
     if (`${error}`.endsWith("401")) {
-      console.log("Ws err 401, fetching id token")
+      console.error("401, refreshing token")
       await fetchIdToken()
     }
-    console.error("Error: ", error)
+    console.error(error)
     setTimeout(connect, 1000);
   })
 }
@@ -332,7 +373,7 @@ function makeBotAction(table, botPlayer) {
     case 1:
       resultAct = action1.getAction(table, botPlayer);
       if (!resultAct) {
-        console.error("Action is not set from action1", table, botPlayer)
+        console.error("Action1 returned no action")
       }
       if (resultAct.stand) {
         tableWs.close()
@@ -396,12 +437,12 @@ function makeBotAction(table, botPlayer) {
     api.makeActionV2(tableId, botPosition, action, {chips}, reqConf())
       .catch(reason => {
         if (reason.response.status === 401) {
-          console.log("Rest err 401, fetching id token")
+          console.error("401, refreshing token")
           fetchIdToken().then(() =>
-            api.makeActionV2(tableId, botPosition, action, {chips}, reqConf()).catch(r => console.log(r.response))
+            api.makeActionV2(tableId, botPosition, action, {chips}, reqConf()).catch(r => console.error(r.response))
           )
         } else {
-          console.log("url: " + reason.response.url + " data: " + JSON.stringify(reason.response.data))
+          console.error("Request failed", reason.response)
         }
       })
   }
@@ -425,21 +466,12 @@ function reqConf() {
 }
 
 function fetchDalyBonus() {
-  axios.put("https://pokerblow.com/api/bonus/daily-bonus", {}, {headers: {Authorization: `Bearer ${idTokenGlobal}`}})
-    .catch(() => console.log("failed to get dayly bonus"))
+  axios.put("https://api.pokergloss.com/api/bonus/daily-bonus", {}, {headers: {Authorization: `Bearer ${idTokenGlobal}`}})
+    .catch(() => console.log("Daily bonus failed"))
 }
 
 async function fetchIdToken() {
-  const customToken = await admin.auth().createCustomToken(userId())
-  const projectKey = "AIzaSyD8vmB6kGZOLHZBNYwd3JLDKd388-DpN9Q" // safe to share
-  const res = await axios.post(`https://www.googleapis.com/identitytoolkit/v3/relyingparty/verifyCustomToken?key=${projectKey}`, {
-   token: customToken,
-   returnSecureToken: true
-  })
-  let token = res.data.idToken;
-  idTokenGlobal = token
-  console.log("fetched idToken at " + Date.now() + ": ", idTokenGlobal)
-  return token;
+   idTokenGlobal = await loginAndGetToken(botEmail, botPassword)
 }
 
 function mergeTable(oldTable, newTable) {
