@@ -4,6 +4,8 @@ const axios = require('axios')
 const WebSocket = require('ws');
 const action0 = require('./action_0')
 const action1 = require('./action_1')
+const actionAI = require('./action_ai')
+
 let basePath = "https://api.pokergloss.com/api/table"
 if (process.env.DEV) {
   basePath = "http://dev.pokerblow.com/api/table"
@@ -61,6 +63,7 @@ async function loginAndGetToken(email, password) {
     // 1. Authenticate the user with email and password
     const userCredential = await signInWithEmailAndPassword(auth, email, password);
     const user = userCredential.user;
+    theUserId = user.uid
 
     // 2. Retrieve the JWT ID token
     const idToken = await user.getIdToken();
@@ -249,7 +252,7 @@ async function onInit() {
     if (bot.status === 'playing') {
       botPosition = bot.position
       if (table.decidingPosition === botPosition) {
-        makeBotAction(table, bot)
+        await makeBotAction(table, bot)
       }
     } else if (bot.status === 'sittingOut') {
       botPosition = bot.position
@@ -334,7 +337,7 @@ function wsConnect() {
             return
           }
 
-          makeBotAction(table, botPlayer)
+          makeBotAction(table, botPlayer).catch(e => console.error("Failed to makeBotAction", e))
         }
         if (event.type === "reset") {
           if (botPosition >= 0 && table.seats[botPosition]) {
@@ -365,11 +368,12 @@ function wsConnect() {
   })
 }
 
-function makeBotAction(table, botPlayer) {
+async function makeBotAction(table, botPlayer) {
   let resultAct
   switch (algorithm) {
     case 2:
-
+      resultAct = await actionAI.getAction(table, botPlayer)
+      break
     case 1:
       resultAct = action1.getAction(table, botPlayer);
       if (!resultAct) {
@@ -379,11 +383,11 @@ function makeBotAction(table, botPlayer) {
         tableWs.close()
         tableWs = undefined
         apiChat.postMessage(table.id, {text: "I'm bored"}, reqConf())
-          .then(() => {
-            setTimeout(() => stand(botPosition), 1000)
-          })
+            .then(() => {
+              setTimeout(() => stand(botPosition), 1000)
+            })
         console.info("Will exit in 2 minutes")
-        setTimeout(() => process.exit(0), 2*60*1000)
+        setTimeout(() => process.exit(0), 2 * 60 * 1000)
       }
       break
     case 0:
@@ -410,8 +414,8 @@ function makeBotAction(table, botPlayer) {
   }
 
   if (action === "raise") {
-    if (!chips || chips < table.maxRoundBet*2-botPlayer.totalRoundBet) {
-      chips = table.maxRoundBet*2 - botPlayer.totalRoundBet
+    if (!chips || chips < table.maxRoundBet * 2 - botPlayer.totalRoundBet) {
+      chips = table.maxRoundBet * 2 - botPlayer.totalRoundBet
     }
   }
 
@@ -435,16 +439,16 @@ function makeBotAction(table, botPlayer) {
 
   const makeAction = async () => {
     api.makeActionV2(tableId, botPosition, action, {chips}, reqConf())
-      .catch(reason => {
-        if (reason.response.status === 401) {
-          console.error("401, refreshing token")
-          fetchIdToken().then(() =>
-            api.makeActionV2(tableId, botPosition, action, {chips}, reqConf()).catch(r => console.error(r.response))
-          )
-        } else {
-          console.error("Request failed", reason.response)
-        }
-      })
+        .catch(reason => {
+          if (reason.response.status === 401) {
+            console.error("401, refreshing token")
+            fetchIdToken().then(() =>
+                api.makeActionV2(tableId, botPosition, action, {chips}, reqConf()).catch(r => console.error(r.response))
+            )
+          } else {
+            console.error("Request failed", reason.response)
+          }
+        })
   }
   setTimeout(makeAction, 1500 + Math.floor(Math.random() * 2000))
 

@@ -2,6 +2,7 @@
   "name": "poker-bot",
   "version": "1.0.0",
   "dependencies": {
+    "@google/genai": "^3.6.1",
     "@pokergloss/table-chat-client-typescript": "0.0.1",
     "@pokergloss/table-client-typescript": "0.0.1",
     "axios": "^0.21.0",
