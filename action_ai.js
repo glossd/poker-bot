@@ -74,5 +74,5 @@ module.exports = {
         } else {
             return {action: "fold", chips: 0};
         }
-    }
+    },
 }
