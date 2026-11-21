@@ -1,5 +1,6 @@
 
 const { GoogleGenAI } = require("@google/genai")
+const {getHandsFromHistory} = require("./action_ai_history");
 
 const ai = new GoogleGenAI({ apiVersion: "v1beta",  apiKey: process.env.GEMINI_API_KEY});
 
@@ -41,9 +42,26 @@ module.exports = {
             players: playersToSend
         }
 
+        const opponentUserIds = table.seats
+            .filter(s => !!s.player && s.player.userId !== botPlayer.userId)
+            .map(s => s.player.userId)
+
+        let historyData = ""
+        for (let uid of opponentUserIds) {
+            let hands = getHandsFromHistory(uid)
+            if (!!hands && hands.length > 0) {
+                historyData += `Previous hands of user(${uid}) JSON: ${JSON.stringify(hands)}. `
+            }
+        }
+
+        const geminiInput = `Poker Texas Hold'em decision. Your table position is ${botPlayer.position}. ${historyData} Table JSON: ${JSON.stringify(tableToSend)}`
+        if (!!process.env.DEBUG) {
+            console.log("Sending input to Gemini", geminiInput)
+        }
+
         const result = await ai.decisions.create({
             model: "gemini-decision-1",
-            input: `Poker Texas Hold'em decision. Your table position is ${botPlayer.position}. Table JSON: ${JSON.stringify(tableToSend)}`,
+            input: geminiInput,
             questions: {
                 action: {
                     type: "choice",

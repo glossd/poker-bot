@@ -5,6 +5,8 @@ const WebSocket = require('ws');
 const action0 = require('./action_0')
 const action1 = require('./action_1')
 const actionAI = require('./action_ai')
+const actionAiHistory = require('./action_ai_history')
+const {startServer} = require('./server')
 
 let basePath = "https://api.pokergloss.com/api/table"
 if (process.env.DEV) {
@@ -69,7 +71,9 @@ async function loginAndGetToken(email, password) {
     const idToken = await user.getIdToken();
 
     console.log("Successfully signed in!");
-    console.log("ID Token:", idToken);
+    if (!!process.env.DEBUG) {
+      console.log("ID Token:", idToken);
+    }
 
     // TODO: Send `idToken` to your backend via headers (e.g., Authorization: Bearer <token>)
     return idToken;
@@ -215,12 +219,13 @@ function takeRandomSeat() {
 }
 
 function buyInNow() {
-  api.buyInV2(tableId, botPosition, {stack: table.bigBlind*100}, reqConf()).catch(e => {
+  api.buyInV2(tableId, botPosition, {stack: table.bigBlind*200}, reqConf()).catch(e => {
     const msg = e.response?.data?.message || e.message
     console.error("Buy-in failed:", msg)
     if (msg.includes("not enough chips") || msg.includes("insufficient")) {
-      console.log("Will retry buy-in in 5 minutes")
-      setTimeout(() => buyInNow(), 5*60*1000)
+      console.log("Insufficient balance!")
+      // send an alert with a message
+      process.exit(1)
     } else {
       process.exit(1)
     }
@@ -329,7 +334,7 @@ function wsConnect() {
           connect()
         }
 
-        actionAI.remember(event, theUserId, table)
+        actionAiHistory.remember(event, theUserId, table)
 
         if (event.type === "playerLeft" && event.payload.leftPlayer && event.payload.leftPlayer.position === botPosition) {
           setTimeout(() => process.exit(0), 30*1000)
@@ -345,10 +350,11 @@ function wsConnect() {
         if (event.type === "reset") {
           if (botPosition >= 0 && table.seats[botPosition]) {
             if (!table.seats[botPosition].player || table.seats[botPosition].player.stack === 0) {
-              console.info("Will buy-in in a minute")
+              apiChat.postMessage(table.id, {text: "Nice hand, well played!"}, reqConf())
+              console.info("Buying in")
               setTimeout(() => {
                 buyInNow()
-              }, 60*1000)
+              }, 3*1000)
             }
           }
         }
@@ -475,6 +481,10 @@ function reqConf() {
 function fetchDalyBonus() {
   axios.put("https://api.pokergloss.com/api/bonus/daily-bonus", {}, {headers: {Authorization: `Bearer ${idTokenGlobal}`}})
     .catch(() => console.log("Daily bonus failed"))
+}
+
+async function fetchIdToken() {
+  idTokenGlobal = await loginAndGetToken(botEmail, botPassword)
 }
 
 const { mergeTable } = require("./mergeTable")
