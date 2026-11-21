@@ -1,4 +1,4 @@
-This is an old poker bot for PokerBlow, updated for AI.
+This was an old poker bot for PokerBlow, updated for AI.
 This could potentially allow you to run the poker-bot on your behalf with the username and password on PokerGloss.com
 
 Run GeminiAI on your behalf

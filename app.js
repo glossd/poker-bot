@@ -97,6 +97,8 @@ let gameType = process.env.GAME_TYPE ? process.env.GAME_TYPE : "table"
 async function main() {
   timeoutExit()
 
+  startServer(() => {return stand(botPosition)}).catch(e => { console.error(e); process.exit(1) })
+
   if (!botEmail && gameType === 'table') { // this allows scaling, meaning no need to specify bot
     if (userIdIdx === -1) {
       tableId = randTableId()
