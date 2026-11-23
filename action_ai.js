@@ -7,10 +7,11 @@ const ai = new GoogleGenAI({ apiVersion: "v1beta",  apiKey: process.env.GEMINI_A
 module.exports = {
     async getAction(table, botPlayer) {
         let passiveActions = []
-        if (table.maxRoundBet > botPlayer.totalRoundBet) {
-            passiveActions = {allIn: "All-in", fold: "Fold", call: "Call"}
-        } else {
+        let isCheckAvailable = table.maxRoundBet === botPlayer.totalRoundBet;
+        if (isCheckAvailable) {
             passiveActions = {allIn: "All-in", check: "Check"}
+        } else {
+            passiveActions = {allIn: "All-in", fold: "Fold", call: "Call"}
         }
 
         // offer gemini-decisions various options to bet/raise chips
@@ -28,6 +29,7 @@ module.exports = {
 
         // saving those input tokens
         const playersToSend = table.seats.map(v => v.player).filter(p => !!p).map(p => ({
+            userId: p.userId,
             blind: p.blind,
             position: p.position,
             stack: p.stack,
@@ -87,7 +89,7 @@ module.exports = {
         }
 
         console.log("No choice, defaulting to check/fold", result)
-        if (passiveActions.includes("check")) {
+        if (isCheckAvailable) {
             return {action: "check", chips: 0}
         } else {
             return {action: "fold", chips: 0};

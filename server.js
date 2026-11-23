@@ -4,10 +4,15 @@ const server = http.createServer((req, res) => {
     res.end('OK');
 });
 
+let listenRetryTimer = null
+
 server.on('error', (err) => {
     if (err.code === 'EADDRINUSE') {
         console.error('Port 3001 in use, retrying in 1s...');
-        setTimeout(() => server.listen(3001), 1000);
+        listenRetryTimer = setTimeout(() => {
+            listenRetryTimer = null
+            server.listen(3001);
+        }, 1000);
     } else {
         console.error('Server error:', err);
         process.exit(1);
@@ -31,6 +36,11 @@ async function gracefulShutdown(signal) {
 
     console.log(`${signal} received. Starting graceful shutdown...`);
 
+    if (listenRetryTimer) {
+        clearTimeout(listenRetryTimer);
+        listenRetryTimer = null;
+    }
+
     const forceExitTimeout = setTimeout(() => {
         console.error('Could not close connections in time, forcefully shutting down');
         if (typeof server.closeAllConnections === 'function') {
@@ -42,7 +52,7 @@ async function gracefulShutdown(signal) {
     forceExitTimeout.unref();
 
     server.close(async (err) => {
-        if (err) {
+        if (err && err.code !== 'ERR_SERVER_NOT_RUNNING') {
             console.error('Error closing server:', err);
             process.exit(1);
         }

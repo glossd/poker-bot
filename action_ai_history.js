@@ -18,7 +18,7 @@ module.exports = {
 
         if (event.type === "blinds") {
             for (let seat of event.payload?.table?.seats) {
-                if (!!seat && !!seat.player && seat.player.userId !== botUserId) {
+                if (!!seat && !!seat.player && seat.player.userId !== botUserId && seat.player.status === "playing") {
                     if (!setStartingStack(seat.player.userId, seat.player.stack)) {
                         // the player could have left the table before the reset comes,
                         // and newHand requires userId. So it is lazy-initialized.
@@ -48,7 +48,7 @@ module.exports = {
 
         if (event.type === "winners") {
             for (let seat of table?.seats) {
-                if (!!seat && !!seat.player && seat.player.userId !== botUserId) {
+                if (!!seat && !!seat.player && seat.player.userId !== botUserId && seat.player.status === "playing") {
                     setCommunityCards(seat.player.userId, event.payload?.table?.communityCards)
                 }
             }
@@ -76,7 +76,7 @@ function setStartingStack(userId, chips) {
         hands = [new OpponentHand()]
         history.set(userId, hands)
     }
-    if (hands.at(-1).startingStack > 0) {
+    if (hands.at(-1).startingStack !== undefined) {
         return false
     }
 

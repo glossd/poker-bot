@@ -243,7 +243,14 @@ async function connect() {
     case "table":
       const res = await api.getFullTable(tableId, reqConf()).catch((e) => console.error("Get table failed", e))
       table = res.data
-      onInit()
+      onInit().catch(async (e) => {
+        console.error("onInit failed:", e)
+        if (`${e}`.endsWith("401")) {
+          console.error("401, refreshing token")
+          await fetchIdToken()
+        }
+        setTimeout(connect, 1000)
+      })
   }
 
   wsConnect()
@@ -353,6 +360,7 @@ function wsConnect() {
           if (botPosition >= 0 && table.seats[botPosition]) {
             if (!table.seats[botPosition].player || table.seats[botPosition].player.stack === 0) {
               apiChat.postMessage(table.id, {text: "Nice hand, well played!"}, reqConf())
+                  .catch(e => console.error("Sending message failed", e))
               console.info("Buying in")
               setTimeout(() => {
                 buyInNow()
