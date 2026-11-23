@@ -490,3 +490,11 @@ async function fetchIdToken() {
 }
 
 const { mergeTable } = require("./mergeTable")
+
+process.on('uncaughtException', (err) => {
+    console.error('Uncaught exception:', err);
+});
+
+process.on('unhandledRejection', (reason) => {
+    console.error('Unhandled rejection:', reason);
+});

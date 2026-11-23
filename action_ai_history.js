@@ -10,6 +10,8 @@ class OpponentHand {
     actions
 }
 
+const historyHandsLimit = Number(process.env.HISTORY_HANDS_LIMIT) || 10;
+
 module.exports = {
     remember(event, botUserId, table) {
         // remember everyone except the bot
@@ -107,7 +109,7 @@ function newHand(userId) {
         history.set(userId, hands)
     }
     hands.push(new OpponentHand())
-    if (hands.length > 10) {
+    if (hands.length > historyHandsLimit) {
         hands.shift()
     }
 }
