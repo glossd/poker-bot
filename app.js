@@ -4,6 +4,10 @@ const axios = require('axios')
 const WebSocket = require('ws');
 const action0 = require('./action_0')
 const action1 = require('./action_1')
+const actionAI = require('./action_ai')
+const actionAiHistory = require('./action_ai_history')
+const {startServer} = require('./server')
+
 let basePath = "https://api.pokergloss.com/api/table"
 if (process.env.DEV) {
   basePath = "http://dev.pokerblow.com/api/table"
@@ -61,12 +65,15 @@ async function loginAndGetToken(email, password) {
     // 1. Authenticate the user with email and password
     const userCredential = await signInWithEmailAndPassword(auth, email, password);
     const user = userCredential.user;
+    theUserId = user.uid
 
     // 2. Retrieve the JWT ID token
     const idToken = await user.getIdToken();
 
     console.log("Successfully signed in!");
-    console.log("ID Token:", idToken);
+    if (!!process.env.DEBUG) {
+      console.log("ID Token:", idToken);
+    }
 
     // TODO: Send `idToken` to your backend via headers (e.g., Authorization: Bearer <token>)
     return idToken;
@@ -89,6 +96,8 @@ let gameType = process.env.GAME_TYPE ? process.env.GAME_TYPE : "table"
 
 async function main() {
   timeoutExit()
+
+  startServer(() => {return stand(botPosition)}).catch(e => { console.error(e); process.exit(1) })
 
   if (!botEmail && gameType === 'table') { // this allows scaling, meaning no need to specify bot
     if (userIdIdx === -1) {
@@ -212,12 +221,13 @@ function takeRandomSeat() {
 }
 
 function buyInNow() {
-  api.buyInV2(tableId, botPosition, {stack: table.bigBlind*100}, reqConf()).catch(e => {
+  api.buyInV2(tableId, botPosition, {stack: table.bigBlind*200}, reqConf()).catch(e => {
     const msg = e.response?.data?.message || e.message
     console.error("Buy-in failed:", msg)
     if (msg.includes("not enough chips") || msg.includes("insufficient")) {
-      console.log("Will retry buy-in in 5 minutes")
-      setTimeout(() => buyInNow(), 5*60*1000)
+      console.log("Insufficient balance!")
+      // send an alert with a message
+      process.exit(1)
     } else {
       process.exit(1)
     }
@@ -233,7 +243,14 @@ async function connect() {
     case "table":
       const res = await api.getFullTable(tableId, reqConf()).catch((e) => console.error("Get table failed", e))
       table = res.data
-      onInit()
+      onInit().catch(async (e) => {
+        console.error("onInit failed:", e)
+        if (`${e}`.endsWith("401")) {
+          console.error("401, refreshing token")
+          await fetchIdToken()
+        }
+        setTimeout(connect, 1000)
+      })
   }
 
   wsConnect()
@@ -249,7 +266,7 @@ async function onInit() {
     if (bot.status === 'playing') {
       botPosition = bot.position
       if (table.decidingPosition === botPosition) {
-        makeBotAction(table, bot)
+        await makeBotAction(table, bot)
       }
     } else if (bot.status === 'sittingOut') {
       botPosition = bot.position
@@ -325,6 +342,9 @@ function wsConnect() {
           tableId = event.payload.table.id
           connect()
         }
+
+        actionAiHistory.remember(event, theUserId, table)
+
         if (event.type === "playerLeft" && event.payload.leftPlayer && event.payload.leftPlayer.position === botPosition) {
           setTimeout(() => process.exit(0), 30*1000)
         }
@@ -334,15 +354,17 @@ function wsConnect() {
             return
           }
 
-          makeBotAction(table, botPlayer)
+          makeBotAction(table, botPlayer).catch(e => console.error("Failed to makeBotAction", e))
         }
         if (event.type === "reset") {
           if (botPosition >= 0 && table.seats[botPosition]) {
             if (!table.seats[botPosition].player || table.seats[botPosition].player.stack === 0) {
-              console.info("Will buy-in in a minute")
+              apiChat.postMessage(table.id, {text: "Nice hand, well played!"}, reqConf())
+                  .catch(e => console.error("Sending message failed", e))
+              console.info("Buying in")
               setTimeout(() => {
                 buyInNow()
-              }, 60*1000)
+              }, 3*1000)
             }
           }
         }
@@ -365,11 +387,12 @@ function wsConnect() {
   })
 }
 
-function makeBotAction(table, botPlayer) {
+async function makeBotAction(table, botPlayer) {
   let resultAct
   switch (algorithm) {
     case 2:
-
+      resultAct = await actionAI.getAction(table, botPlayer)
+      break
     case 1:
       resultAct = action1.getAction(table, botPlayer);
       if (!resultAct) {
@@ -379,11 +402,11 @@ function makeBotAction(table, botPlayer) {
         tableWs.close()
         tableWs = undefined
         apiChat.postMessage(table.id, {text: "I'm bored"}, reqConf())
-          .then(() => {
-            setTimeout(() => stand(botPosition), 1000)
-          })
+            .then(() => {
+              setTimeout(() => stand(botPosition), 1000)
+            })
         console.info("Will exit in 2 minutes")
-        setTimeout(() => process.exit(0), 2*60*1000)
+        setTimeout(() => process.exit(0), 2 * 60 * 1000)
       }
       break
     case 0:
@@ -410,8 +433,8 @@ function makeBotAction(table, botPlayer) {
   }
 
   if (action === "raise") {
-    if (!chips || chips < table.maxRoundBet*2-botPlayer.totalRoundBet) {
-      chips = table.maxRoundBet*2 - botPlayer.totalRoundBet
+    if (!chips || chips < table.maxRoundBet * 2 - botPlayer.totalRoundBet) {
+      chips = table.maxRoundBet * 2 - botPlayer.totalRoundBet
     }
   }
 
@@ -435,16 +458,16 @@ function makeBotAction(table, botPlayer) {
 
   const makeAction = async () => {
     api.makeActionV2(tableId, botPosition, action, {chips}, reqConf())
-      .catch(reason => {
-        if (reason.response.status === 401) {
-          console.error("401, refreshing token")
-          fetchIdToken().then(() =>
-            api.makeActionV2(tableId, botPosition, action, {chips}, reqConf()).catch(r => console.error(r.response))
-          )
-        } else {
-          console.error("Request failed", reason.response)
-        }
-      })
+        .catch(reason => {
+          if (reason.response.status === 401) {
+            console.error("401, refreshing token")
+            fetchIdToken().then(() =>
+                api.makeActionV2(tableId, botPosition, action, {chips}, reqConf()).catch(r => console.error(r.response))
+            )
+          } else {
+            console.error("Request failed", reason.response)
+          }
+        })
   }
   setTimeout(makeAction, 1500 + Math.floor(Math.random() * 2000))
 
@@ -471,48 +494,15 @@ function fetchDalyBonus() {
 }
 
 async function fetchIdToken() {
-   idTokenGlobal = await loginAndGetToken(botEmail, botPassword)
+  idTokenGlobal = await loginAndGetToken(botEmail, botPassword)
 }
 
-function mergeTable(oldTable, newTable) {
-  if (oldTable == null) {
-    return newTable
-  }
+const { mergeTable } = require("./mergeTable")
 
-  if (newTable === undefined || newTable === null) {
-    return oldTable
-  }
+process.on('uncaughtException', (err) => {
+    console.error('Uncaught exception:', err);
+});
 
-  let mergedTable = {};
-  Object.assign(mergedTable, oldTable, newTable);
-  mergedTable.seats = oldTable.seats;
-  if (newTable.seats) {
-    if (!oldTable.seats) {
-      mergedTable.seats = newTable.seats
-      return mergedTable
-    }
-    newTable.seats.forEach(newSeat => {
-      let position = newSeat.position;
-      let oldSeat = oldTable.seats[position];
-      let mergedSeat = {};
-      Object.assign(mergedSeat, oldSeat, newSeat);
-      mergedTable.seats[position] = mergedSeat;
-      mergedTable.seats[position].player = oldSeat.player;
-    })
-
-    newTable.seats.filter(s => s.player !== undefined).forEach(newSeat => {
-      let position = newSeat.position;
-      let newPlayer = newSeat.player
-      if (newPlayer === null) {
-        mergedTable.seats[position].player = null
-        return
-      }
-
-      let oldPlayer = oldTable.seats[position].player;
-      let mergedPlayer = {};
-      Object.assign(mergedPlayer, oldPlayer, newPlayer);
-      mergedTable.seats[position].player = mergedPlayer
-    });
-  }
-  return mergedTable
-}
+process.on('unhandledRejection', (reason) => {
+    console.error('Unhandled rejection:', reason);
+});

@@ -1,7 +1,0 @@
-version: "3"
-services:
-  bot:
-    environment:
-      - ALG=1
-    image: "registry.gitlab.com/pokerblow/poker-bot:$V"
-    restart: always

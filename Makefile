@@ -4,9 +4,11 @@ isDev ?=
 isLocal ?=
 gameType ?= table
 uid ?=
+alg = 2
+debug = true
 
 run_ai:
-	TABLE_ID=$(id) USER_ID=$(uid) ALG=1 GAME_TYPE=$(gameType) BOT_EMAIL=$(email) BOT_PASSWORD=$(password) node app.js
+	TABLE_ID=$(tableid) GEMINI_API_KEY=$(geminikey) ALG=$(alg) GAME_TYPE=$(gameType) BOT_EMAIL=$(email) BOT_PASSWORD=$(password) DEBUG=true node app.js
 
 run:
 	TABLE_ID=$(id) BOT_USER_IDX=$(bot) USER_ID=$(uid) ALG=1 GAME_TYPE=$(gameType) DEV=$(isDev) LOCAL=$(isLocal) node app.js
