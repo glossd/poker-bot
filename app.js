@@ -123,6 +123,8 @@ async function main() {
     process.exit(1)
   }
 
+  startTokenRefresh()
+
   if (gameType === 'multiLobby') {
     await api.registerMulti(tableId, reqConf()).catch(e => console.log("Register failed"))
     const ws = new WebSocket(`${host()}/api/ws/news?token=${idTokenGlobal}`)
@@ -318,71 +320,103 @@ function wsConnect() {
 
   tries += 1
 
+  // Heartbeat: ping every 30s, terminate if no pong received
+  let isAlive = true
+  const heartbeat = setInterval(() => {
+    if (tableWs && tableWs.readyState === WebSocket.OPEN) {
+      if (isAlive) {
+        isAlive = false
+        tableWs.ping()
+      } else {
+        console.error('Heartbeat timeout, terminating connection')
+        tableWs.terminate()
+      }
+    }
+  }, 30 * 1000)
+
+  tableWs.on('pong', () => {
+    isAlive = true
+  })
+
   tableWs.on('open', () => {
     console.log('socket open');
+    tries = 1
   })
 
   tableWs.on('message', (data) => {
-    let msgs = data.split(/\n/)
-    for (let data of msgs) {
-      const events = JSON.parse(data)
-      for (let event of events) {
-        table = mergeTable(table, event.payload.table)
+    try {
+      let msgs = data.split(/\n/)
+      for (let data of msgs) {
+        const events = JSON.parse(data)
+        for (let event of events) {
+          table = mergeTable(table, event.payload.table)
 
-        if (event.type === 'multiPlayerMove') {
-          tableWs.close()
-          tableWs = null
-          tableId = event.payload.tableId
-          connect()
-        }
-        if (event.type === 'sitngoGameStart') {
-          tableWs.close()
-          tableWs = null
-          gameType = "table"
-          tableId = event.payload.table.id
-          connect()
-        }
-
-        actionAiHistory.remember(event, theUserId, table)
-
-        if (event.type === "playerLeft" && event.payload.leftPlayer && event.payload.leftPlayer.position === botPosition) {
-          setTimeout(() => process.exit(0), 30*1000)
-        }
-        if (event.type === "timeToDecide" && event.payload.table.seats[0].position === botPosition) {
-          let botPlayer = table.seats[botPosition].player
-          if (botPlayer.userId !== userId()) {
-            return
+          if (event.type === 'multiPlayerMove') {
+            tableWs.close()
+            tableWs = null
+            tableId = event.payload.tableId
+            connect()
+          }
+          if (event.type === 'sitngoGameStart') {
+            tableWs.close()
+            tableWs = null
+            gameType = "table"
+            tableId = event.payload.table.id
+            connect()
           }
 
-          makeBotAction(table, botPlayer).catch(e => console.error("Failed to makeBotAction", e))
-        }
-        if (event.type === "reset") {
-          if (botPosition >= 0 && table.seats[botPosition]) {
-            if (!table.seats[botPosition].player || table.seats[botPosition].player.stack === 0) {
-              apiChat.postMessage(table.id, {text: "Nice hand, well played!"}, reqConf())
-                  .catch(e => console.error("Sending message failed", e))
-              console.info("Buying in")
-              setTimeout(() => {
-                buyInNow()
-              }, 3*1000)
+          actionAiHistory.remember(event, theUserId, table)
+
+          if (event.type === "playerLeft" && event.payload.leftPlayer && event.payload.leftPlayer.position === botPosition) {
+            console.log("Received playerLeft on the bot position")
+            takeRandomSeat()
+          }
+          if (event.type === "timeToDecide" && event.payload.table.seats[0].position === botPosition) {
+            let botPlayer = table.seats[botPosition].player
+            if (botPlayer.userId !== userId()) {
+              return
+            }
+
+            makeBotAction(table, botPlayer).catch(e => console.error("Failed to makeBotAction", e))
+          }
+          if (event.type === "reset") {
+            if (botPosition >= 0 && table.seats[botPosition]) {
+              if (!table.seats[botPosition].player || table.seats[botPosition].player.stack === 0) {
+                apiChat.postMessage(table.id, {text: "Nice hand, well played!"}, reqConf())
+                    .catch(e => console.error("Sending message failed", e))
+                console.info("Buying in")
+                setTimeout(() => {
+                  buyInNow()
+                }, 3*1000)
+              }
             }
           }
         }
       }
+    } catch (e) {
+      console.error('Message parse error:', e)
     }
   })
 
   tableWs.on('close', () => {
     console.log('socket close');
-    setTimeout(connect, 1000 * tries);
+    clearInterval(heartbeat)
+    setTimeout(() => {
+      fetchIdToken().then(() => connect()).catch(e => console.error('Token refresh failed:', e))
+    }, 1000 * tries)
   })
 
   tableWs.on('error', async (error) => {
+    console.error(error)
+    clearInterval(heartbeat)
     if (`${error}`.endsWith("401")) {
       console.error("401, refreshing token")
-      await fetchIdToken()
+      try {
+        await fetchIdToken()
+      } catch (e) {
+        console.error("Token refresh failed:", e)
+      }
     }
-    console.error(error)
     setTimeout(connect, 1000);
   })
 }
@@ -458,16 +492,16 @@ async function makeBotAction(table, botPlayer) {
 
   const makeAction = async () => {
     api.makeActionV2(tableId, botPosition, action, {chips}, reqConf())
-        .catch(reason => {
-          if (reason.response.status === 401) {
-            console.error("401, refreshing token")
-            fetchIdToken().then(() =>
-                api.makeActionV2(tableId, botPosition, action, {chips}, reqConf()).catch(r => console.error(r.response))
-            )
-          } else {
-            console.error("Request failed", reason.response)
-          }
-        })
+      .catch(reason => {
+        if (reason.response && reason.response.status === 401) {
+          console.error("401, refreshing token")
+          fetchIdToken().then(() =>
+            api.makeActionV2(tableId, botPosition, action, {chips}, reqConf()).catch(r => console.error(r.response || "unknown"))
+          );
+        } else {
+          console.error("Request failed", reason.response || "unknown")
+        }
+      })
   }
   setTimeout(makeAction, 1500 + Math.floor(Math.random() * 2000))
 
@@ -497,12 +531,26 @@ async function fetchIdToken() {
   idTokenGlobal = await loginAndGetToken(botEmail, botPassword)
 }
 
+function startTokenRefresh() {
+  setInterval(async () => {
+    try {
+      await fetchIdToken()
+      console.log("Token refreshed")
+    } catch (e) {
+      console.error("Token refresh failed:", e)
+    }
+  }, 20 * 60 * 1000)
+}
+
 const { mergeTable } = require("./mergeTable")
 
 process.on('uncaughtException', (err) => {
     console.error('Uncaught exception:', err);
+    process.exit(1);
 });
 
 process.on('unhandledRejection', (reason) => {
     console.error('Unhandled rejection:', reason);
+    process.exit(1);
 });
+
