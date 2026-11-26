@@ -95,7 +95,6 @@ let botPosition = -1
 let gameType = process.env.GAME_TYPE ? process.env.GAME_TYPE : "table"
 
 async function main() {
-  timeoutExit()
 
   startServer(() => {return stand(botPosition)}).catch(e => { console.error(e); process.exit(1) })
 
@@ -182,20 +181,6 @@ async function main() {
   }
 
   connect()
-}
-
-function timeoutExit() {
-  setTimeout(() => {
-    api.stand(tableId, botPosition, reqConf())
-      .then(() => {
-        console.log("Timeout exit")
-        process.exit(0)
-      })
-      .catch(() => {
-        console.error("Timeout exit")
-        process.exit(0)
-      })
-  }, 120*60*1000)
 }
 
 main()
